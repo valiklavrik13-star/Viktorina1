@@ -35,6 +35,10 @@ export const QuizPlayer: React.FC<QuizPlayerProps> = ({ quiz, onFinish, onBack, 
   const [overallTimeLeft, setOverallTimeLeft] = useState(quiz.timeLimit);
   const [questionTimeLeft, setQuestionTimeLeft] = useState(currentQuestion.timeLimit);
   const questionTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const quizRef = useRef(quiz);
+  quizRef.current = quiz;
   
   const advanceQuiz = (isCorrect: boolean, submittedAnswers: number[]) => {
     const newAnswers = { ...answers, [currentQuestion.id]: submittedAnswers };
@@ -92,19 +96,23 @@ export const QuizPlayer: React.FC<QuizPlayerProps> = ({ quiz, onFinish, onBack, 
 
   // Overall Quiz Timer
   useEffect(() => {
-    if (!overallTimeLeft || overallTimeLeft <= 0) return;
+    if (!quiz.timeLimit || quiz.timeLimit <= 0) {
+        setOverallTimeLeft(undefined);
+        return;
+    }
+
     const timer = setInterval(() => {
         setOverallTimeLeft(prev => {
             if (prev !== undefined && prev <= 1) {
                 clearInterval(timer);
-                onFinish(answers, quiz); // Time's up
+                onFinish(answersRef.current, quizRef.current); // Time's up
                 return 0;
             }
             return prev !== undefined ? prev - 1 : undefined;
         });
     }, 1000);
     return () => clearInterval(timer);
-  }, [quiz.id, onFinish, answers, quiz]);
+  }, [quiz.id, quiz.timeLimit, onFinish]);
 
   // Per-Question Timer
   useEffect(() => {

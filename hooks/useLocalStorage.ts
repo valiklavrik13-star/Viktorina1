@@ -1,5 +1,6 @@
 
-import { useState, useEffect, Dispatch, SetStateAction } from 'react';
+
+import { useState, useEffect, Dispatch, SetStateAction, useCallback } from 'react';
 
 export const useLocalStorage = <T,>(key: string, initialValue: T): [T, Dispatch<SetStateAction<T>>] => {
   const [storedValue, setStoredValue] = useState<T>(() => {
@@ -12,15 +13,28 @@ export const useLocalStorage = <T,>(key: string, initialValue: T): [T, Dispatch<
     }
   });
 
-  const setValue: Dispatch<SetStateAction<T>> = (value) => {
+  const setValue: Dispatch<SetStateAction<T>> = useCallback((value) => {
     try {
-      const valueToStore = value instanceof Function ? value(storedValue) : value;
-      setStoredValue(valueToStore);
-      window.localStorage.setItem(key, JSON.stringify(valueToStore));
+      setStoredValue(currentStoredValue => {
+        const valueToStore = value instanceof Function ? value(currentStoredValue) : value;
+        window.localStorage.setItem(key, JSON.stringify(valueToStore));
+        return valueToStore;
+      });
     } catch (error) {
       console.error(error);
     }
-  };
+  }, [key]);
+  
+  useEffect(() => {
+    try {
+      const item = window.localStorage.getItem(key);
+      setStoredValue(item ? JSON.parse(item) : initialValue);
+    } catch (error) {
+      console.error(error);
+      setStoredValue(initialValue);
+    }
+  }, [key, initialValue]);
+
 
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {

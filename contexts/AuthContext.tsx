@@ -1,9 +1,7 @@
 import React, { createContext, useContext, useMemo, PropsWithChildren } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-
-interface User {
-  id: string;
-}
+// FIX: Import User type from the central types file.
+import { User } from '../types';
 
 interface AuthContextType {
   user: User | null;

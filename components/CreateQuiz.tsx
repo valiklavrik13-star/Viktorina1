@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Quiz, Question, QuizCategory, QuestionFeedback, FeedbackDisplayCondition } from '../types';
 import { PlusIcon } from './icons/PlusIcon';
 import { TrashIcon } from './icons/TrashIcon';
@@ -11,7 +11,9 @@ interface CreateQuizProps {
   onCreateQuiz: (quizData: QuizData) => void;
   onUpdateQuiz: (quizData: Quiz) => void;
   onBack: () => void;
+  onDataChange: (data: (QuizData | Quiz) | null) => void;
   quizToEdit?: Quiz | null;
+  autosaveEnabled: boolean;
 }
 
 interface QuestionEditorProps {
@@ -19,7 +21,34 @@ interface QuestionEditorProps {
   index: number;
   updateQuestion: (index: number, question: Question) => void;
   removeQuestion: (index: number) => void;
+  overallTimeLimit?: number;
 }
+
+const isQuizDataEffectivelyEmpty = (data: QuizData | Quiz): boolean => {
+    const hasTitle = data.title.trim() !== '';
+    const hasTags = data.tags && data.tags.length > 0;
+    
+    if (hasTitle || hasTags) {
+        return false;
+    }
+
+    if (data.questions.length > 1) {
+        return false;
+    }
+    
+    if (data.questions.length === 1) {
+        const q = data.questions[0];
+        const hasQuestionText = q.questionText.trim() !== '';
+        const hasImage = !!q.image;
+        const hasOptionsText = q.options.some(opt => opt.trim() !== '');
+        
+        if (hasQuestionText || hasImage || hasOptionsText) {
+            return false;
+        }
+    }
+    
+    return true;
+};
 
 const secondsToMinSec = (totalSeconds: number | undefined): { minutes: number; seconds: number } => {
   const s = totalSeconds || 0;
@@ -34,6 +63,7 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
   index,
   updateQuestion,
   removeQuestion,
+  overallTimeLimit,
 }) => {
   const { t } = useTranslation();
   
@@ -60,6 +90,11 @@ const QuestionEditor: React.FC<QuestionEditorProps> = ({
 
     let totalSeconds = (minutes * 60) + seconds;
     
+    // Cap at overall quiz time if it's set
+    if (overallTimeLimit && overallTimeLimit > 0 && totalSeconds > overallTimeLimit) {
+        totalSeconds = overallTimeLimit;
+    }
+
     // per-question limit: 300 seconds (5 minutes)
     if (totalSeconds > 300) {
         totalSeconds = 300;
@@ -266,16 +301,48 @@ const getInitialState = (): QuizData => {
 };
 
 
-export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQuiz, onBack, quizToEdit }) => {
+export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQuiz, onBack, onDataChange, quizToEdit, autosaveEnabled }) => {
   const { t } = useTranslation();
   const isEditMode = !!quizToEdit;
   
-  const [quizData, setQuizData] = useState<QuizData | Quiz>(() => quizToEdit || getInitialState());
+  const [quizData, setQuizDataState] = useState<QuizData | Quiz>(() => quizToEdit || getInitialState());
+  const [hasChanged, setHasChanged] = useState(false);
   const [tagInput, setTagInput] = useState('');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
+  const timeoutRef = useRef<number | null>(null);
+
+  const updateQuizData = (updater: React.SetStateAction<QuizData | Quiz>) => {
+    if (!hasChanged) {
+        setHasChanged(true);
+    }
+    setQuizDataState(updater);
+  };
+
 
   useEffect(() => {
-    setQuizData(quizToEdit || getInitialState());
-  }, [quizToEdit]);
+    if (!hasChanged || !autosaveEnabled) {
+        return;
+    }
+
+    if (isQuizDataEffectivelyEmpty(quizData)) {
+        onDataChange(null);
+    } else {
+        onDataChange(quizData);
+        setSaveStatus('saved');
+        if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+        }
+        timeoutRef.current = window.setTimeout(() => {
+            setSaveStatus('idle');
+        }, 2000);
+    }
+
+    return () => {
+        if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+        }
+    };
+  }, [quizData, onDataChange, hasChanged, autosaveEnabled]);
 
 
   const handleAddTag = () => {
@@ -285,7 +352,7 @@ export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQu
         return;
     }
 
-    setQuizData(prev => {
+    updateQuizData(prev => {
         const existingTags = prev.tags || [];
         const uniqueNewTags = newTagsRaw.filter(tag => !existingTags.includes(tag));
         if (uniqueNewTags.length === 0) {
@@ -305,11 +372,11 @@ export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQu
   };
 
   const handleRemoveTag = (tagToRemove: string) => {
-    setQuizData(prev => ({...prev, tags: (prev.tags || []).filter(tag => tag !== tagToRemove)}));
+    updateQuizData(prev => ({...prev, tags: (prev.tags || []).filter(tag => tag !== tagToRemove)}));
   };
 
   const updateQuestion = (index: number, question: Question) => {
-    setQuizData(prev => {
+    updateQuizData(prev => {
       const newQuestions = [...prev.questions];
       newQuestions[index] = question;
       return { ...prev, questions: newQuestions };
@@ -318,7 +385,7 @@ export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQu
 
   const addQuestion = () => {
     if (quizData.questions.length >= 20) return;
-    setQuizData(prev => ({
+    updateQuizData(prev => ({
       ...prev,
       questions: [
         ...prev.questions,
@@ -329,7 +396,7 @@ export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQu
 
   const removeQuestion = (index: number) => {
     if (quizData.questions.length <= 1) return;
-    setQuizData(prev => ({
+    updateQuizData(prev => ({
       ...prev,
       questions: prev.questions.filter((_, i) => i !== index),
     }));
@@ -338,7 +405,7 @@ export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQu
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, type } = e.target;
     const value = type === 'checkbox' ? (e.target as HTMLInputElement).checked : e.target.value;
-    setQuizData(prev => ({ ...prev, [name]: value }));
+    updateQuizData(prev => ({ ...prev, [name]: value }));
   };
 
   const handleOverallTimeChange = (part: 'minutes' | 'seconds', value: string) => {
@@ -363,10 +430,35 @@ export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQu
         totalSeconds = 3600;
     }
 
-    setQuizData(prev => ({ ...prev, timeLimit: totalSeconds }));
+    updateQuizData(prev => ({ ...prev, timeLimit: totalSeconds }));
   };
 
   const { minutes: overallMinutes, seconds: overallSeconds } = secondsToMinSec(quizData.timeLimit);
+
+  const formatTime = (totalSeconds: number): string => {
+    if (totalSeconds < 0) totalSeconds = 0;
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins} ${t('createQuiz.minShort')} ${secs} ${t('createQuiz.secShort')}`;
+  };
+
+  const totalQuestionsTime = useMemo(() =>
+    quizData.questions.reduce((sum, q) => sum + (q.timeLimit || 0), 0),
+    [quizData.questions]
+  );
+
+  const overallTime = quizData.timeLimit || 0;
+  
+  const timeValidationError = useMemo(() => {
+    if (overallTime > 0 && totalQuestionsTime > overallTime) {
+      return t('createQuiz.timeSumError', {
+        total: formatTime(totalQuestionsTime),
+        overall: formatTime(overallTime)
+      });
+    }
+    return null;
+  }, [overallTime, totalQuestionsTime, t]);
+
 
   const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -376,6 +468,11 @@ export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQu
         handleAddTag();
     }
     
+    if (timeValidationError) {
+      alert(timeValidationError);
+      return;
+    }
+
     const isFormValid = quizData.title.trim() !== '' &&
       quizData.questions.every(q => 
         (q.questionText.trim() !== '' || !!q.image) &&
@@ -486,6 +583,9 @@ export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQu
                         className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md p-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition dark:text-white"
                     />
                 </div>
+                 {timeValidationError && (
+                    <p className="text-sm text-red-500 mt-2">{timeValidationError}</p>
+                )}
               </div>
             </div>
              <div className="relative flex items-start mt-2">
@@ -539,11 +639,12 @@ export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQu
               index={i}
               updateQuestion={updateQuestion}
               removeQuestion={removeQuestion}
+              overallTimeLimit={quizData.timeLimit}
             />
           ))}
         </div>
 
-        <div className="flex flex-col sm:flex-row-reverse gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+        <div className="flex flex-col sm:flex-row-reverse gap-4 pt-4 border-t border-gray-200 dark:border-gray-700 items-center">
            <button
             type="submit"
             className="w-full sm:w-auto inline-flex justify-center items-center gap-2 bg-indigo-600 text-white font-bold py-3 px-6 rounded-lg hover:bg-indigo-700 transition-colors duration-300 shadow-lg"
@@ -559,6 +660,9 @@ export const CreateQuiz: React.FC<CreateQuizProps> = ({ onCreateQuiz, onUpdateQu
             <PlusIcon className="w-5 h-5"/>
             {t('createQuiz.addQuestion')}
           </button>
+          <span className={`flex-grow text-center sm:text-left text-sm text-gray-500 dark:text-gray-400 transition-opacity duration-300 ${autosaveEnabled && saveStatus === 'saved' ? 'opacity-100' : 'opacity-0'}`}>
+            {t('draft.saved')}
+          </span>
         </div>
       </form>
     </div>

@@ -7,14 +7,20 @@ interface ConfirmationDialogProps {
   onCancel: () => void;
   confirmButtonText: string;
   isDestructive: boolean;
+  cancelButtonText?: string;
 }
 
-export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({ message, onConfirm, onCancel, confirmButtonText, isDestructive }) => {
+export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({ message, onConfirm, onCancel, confirmButtonText, isDestructive, cancelButtonText }) => {
   const { t } = useTranslation();
 
   const confirmClasses = isDestructive
     ? "bg-red-600 hover:bg-red-700"
     : "bg-indigo-600 hover:bg-indigo-700";
+    
+  const cancelClasses = isDestructive
+    ? "bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200 font-semibold hover:bg-gray-300 dark:hover:bg-gray-500"
+    : "bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200 font-semibold hover:bg-gray-300 dark:hover:bg-gray-500";
+
 
   return (
     <div 
@@ -39,9 +45,9 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({ message,
           </button>
           <button
             onClick={onCancel}
-            className="w-full sm:w-auto px-6 py-2.5 rounded-lg bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200 font-semibold hover:bg-gray-300 dark:hover:bg-gray-500 transition-colors"
+            className={`w-full sm:w-auto px-6 py-2.5 rounded-lg transition-colors ${cancelClasses}`}
           >
-            {t('confirmation.cancel')}
+            {cancelButtonText || t('confirmation.cancel')}
           </button>
         </div>
       </div>

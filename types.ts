@@ -61,6 +61,15 @@ export interface Quiz {
   playUntilFirstMistake?: boolean;
   isPrivate?: boolean;
   createdAt?: string;
+  lastModified?: string;
+}
+
+export type QuizDataForCreation = Omit<Quiz, 'id' | 'ratings' | 'averageRating' | 'creatorId' | 'stats' | 'playedBy' | 'createdAt'>;
+
+
+// FIX: Add User interface for use across the application.
+export interface User {
+  id: string;
 }
 
 export type UserAnswers = { [questionId: string]: number | number[] };
@@ -148,6 +157,17 @@ export interface Leaderboards {
   };
 }
 
+export interface Comment {
+  id: string;
+  quizId: string;
+  authorId: string;
+  text: string;
+  createdAt: string; // ISO string
+  parentId: string | null;
+  likes: string[]; // Array of user IDs
+  dislikes: string[]; // Array of user IDs
+}
+
 export enum AppView {
   LIST = 'LIST',
   CREATE = 'CREATE',
@@ -168,4 +188,5 @@ export enum AppView {
   SERIES_SORTING_GAME = 'SERIES_SORTING_GAME',
   SERIES_ACTOR_QUIZ = 'SERIES_ACTOR_QUIZ',
   SERIES_DESCRIPTION_QUIZ = 'SERIES_DESCRIPTION_QUIZ',
+  DISCUSSION = 'DISCUSSION',
 }

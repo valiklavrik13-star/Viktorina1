@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { Quiz, AppView, UserAnswers, QuestionStats, Question, UserPlayRecord, MovieGenre, GameStats, Leaderboards, LeaderboardEntry } from './types';
-import { useLocalStorage } from './hooks/useLocalStorage';
+import { Quiz, AppView, UserAnswers, QuestionStats, Question, UserPlayRecord, MovieGenre, GameStats, Leaderboards, LeaderboardEntry, Comment, User, QuizDataForCreation } from './types';
 import { QuizList } from './components/QuizList';
 import { CreateQuiz } from './components/CreateQuiz';
 import { QuizPlayer } from './components/QuizPlayer';
@@ -25,18 +24,20 @@ import { SeriesActorQuizPlayer } from './components/SeriesActorQuizPlayer';
 import { SeriesDescriptionQuizPlayer } from './components/SeriesDescriptionQuizPlayer';
 import { useAuth } from './contexts/AuthContext';
 import { LoginScreen } from './components/LoginScreen';
+import { DiscussionView } from './components/DiscussionView';
+import { useLocalStorage } from './hooks/useLocalStorage';
 
 type GameOverResult = number | { rounds: number; avgPercentage: number };
-
-type QuizDataForCreation = Omit<Quiz, 'id' | 'ratings' | 'averageRating' | 'creatorId' | 'stats' | 'playedBy' | 'createdAt'>;
 
 const App = () => {
   const [quizzes, setQuizzes] = useLocalStorage<Quiz[]>('quizzes', []);
   const [playHistory, setPlayHistory] = useLocalStorage<UserPlayRecord[]>('playHistory', []);
   const [gameStats, setGameStats] = useLocalStorage<GameStats>('gameStats', { movieQuiz: {}, seriesQuiz: {}, movieRatingGame: {}, seriesSeasonRatingGame: {}, directorQuiz: {}, yearQuiz: {}, actorQuiz: {}, seriesActorQuiz: {}, descriptionQuiz: {}, seriesDescriptionQuiz: {} });
   const [leaderboards, setLeaderboards] = useLocalStorage<Leaderboards>('leaderboards', { movieQuiz: {}, seriesQuiz: {}, movieRatingGame: {}, seriesSeasonRatingGame: {}, directorQuiz: {}, yearQuiz: {}, actorQuiz: {}, seriesActorQuiz: {}, descriptionQuiz: {} });
+  const [comments, setComments] = useLocalStorage<Comment[]>('comments', []);
   
   const { user, isAuthenticated, logout } = useAuth();
+  const [draft, setDraft] = useLocalStorage<(Quiz | QuizDataForCreation) | null>(`quizDraft_${user?.id || 'guest'}`, null);
 
   const [currentView, setCurrentView] = useState<AppView>(AppView.LIST);
   const [postLoginRedirect, setPostLoginRedirect] = useState<AppView>(AppView.LIST);
@@ -44,16 +45,31 @@ const App = () => {
   const [activeQuiz, setActiveQuiz] = useState<Quiz | null>(null);
   const [editingQuiz, setEditingQuiz] = useState<Quiz | null>(null);
   const [statsQuiz, setStatsQuiz] = useState<Quiz | null>(null);
+  const [discussionQuiz, setDiscussionQuiz] = useState<Quiz | null>(null);
   const [activeMovieGameOptions, setActiveMovieGameOptions] = useState<{ genre: MovieGenre } | null>(null);
-  const [confirmation, setConfirmation] = useState<{ message: string; onConfirm: () => void; isDestructive: boolean; confirmText: string; } | null>(null);
+  const [confirmation, setConfirmation] = useState<{ message: string; onConfirm: () => void; onCancel?: () => void; isDestructive: boolean; confirmText: string; cancelButtonText?: string; } | null>(null);
   const [reportingQuiz, setReportingQuiz] = useState<Quiz | null>(null);
   const [notification, setNotification] = useState<string | null>(null);
   const [notificationKey, setNotificationKey] = useState(0);
   const [privateQuizIdToPlay, setPrivateQuizIdToPlay] = useState<string | null>(null);
+  const [autosaveEnabled, setAutosaveEnabled] = useState(false);
 
 
   const [lastAnswers, setLastAnswers] = useState<UserAnswers>({});
   const { t } = useTranslation();
+
+
+  const saveDraft = useCallback((newDraftData: QuizDataForCreation | Quiz | null) => {
+    if (!user) return; 
+
+    if (newDraftData === null) {
+        setDraft(null);
+        return;
+    }
+    
+    setDraft({ ...newDraftData, lastModified: new Date().toISOString() });
+  }, [user, setDraft]);
+
 
   const handleStartQuiz = useCallback((quiz: Quiz) => {
     setActiveQuiz(quiz);
@@ -117,19 +133,30 @@ const App = () => {
 
   const isMyQuiz = useCallback((quiz: Quiz) => isAuthenticated && user ? quiz.creatorId === user.id : false, [user, isAuthenticated]);
 
-  const handleBackToList = () => {
+  const handleBackToList = useCallback(() => {
     setActiveQuiz(null);
     setEditingQuiz(null);
     setStatsQuiz(null);
+    setDiscussionQuiz(null);
     setLastAnswers({});
     setCurrentView(AppView.LIST);
-  }
+  }, []);
 
-  const handleCreateQuiz = () => requireAuth(AppView.CREATE);
+  const handleCreateQuiz = () => {
+    if (!requireAuth(AppView.CREATE)) return;
+    setEditingQuiz(null);
+    setAutosaveEnabled(draft === null);
+    setCurrentView(AppView.CREATE);
+  };
   
   const handleViewStats = (quiz: Quiz) => {
     setStatsQuiz(quiz);
     setCurrentView(AppView.STATS);
+  };
+
+  const handleOpenDiscussion = (quiz: Quiz) => {
+    setDiscussionQuiz(quiz);
+    setCurrentView(AppView.DISCUSSION);
   };
 
   const handleViewProfile = () => requireAuth(AppView.USER_PROFILE);
@@ -156,6 +183,9 @@ const App = () => {
     };
     
     setQuizzes(prevQuizzes => [...prevQuizzes, newQuiz]);
+    if (autosaveEnabled) {
+      saveDraft(null);
+    }
     handleBackToList();
   };
   
@@ -164,6 +194,7 @@ const App = () => {
         message: t('quizCard.editConfirm'),
         onConfirm: () => {
             setEditingQuiz(quiz);
+            setAutosaveEnabled(true);
             setCurrentView(AppView.EDIT);
             setConfirmation(null);
         },
@@ -171,6 +202,27 @@ const App = () => {
         confirmText: t('quizCard.edit')
     });
   };
+
+  const handleEditDraft = useCallback(() => {
+    if (draft) {
+      setEditingQuiz(draft as Quiz);
+      setAutosaveEnabled(true);
+      setCurrentView(AppView.EDIT);
+    }
+  }, [draft]);
+
+  const handleDeleteDraft = useCallback(() => {
+    setConfirmation({
+      message: t('draft.deleteConfirm'),
+      onConfirm: () => {
+        saveDraft(null);
+        setConfirmation(null);
+      },
+      onCancel: () => setConfirmation(null),
+      isDestructive: true,
+      confirmText: t('draft.delete'),
+    });
+  }, [saveDraft, t]);
 
   const handleUpdateQuiz = (updatedQuizData: Quiz) => {
     const originalQuiz = quizzes.find(q => q.id === updatedQuizData.id);
@@ -214,6 +266,9 @@ const App = () => {
         return quiz;
     }));
 
+    if (autosaveEnabled) {
+      saveDraft(null);
+    }
     handleBackToList();
 };
 
@@ -225,6 +280,7 @@ const App = () => {
             setQuizzes(prev => prev.filter(q => q.id !== quizId));
             setConfirmation(null);
         },
+        onCancel: () => setConfirmation(null),
         isDestructive: true,
         confirmText: t('quizCard.delete')
     });
@@ -285,7 +341,7 @@ const App = () => {
     setCurrentView(AppView.SERIES_DESCRIPTION_QUIZ);
   };
 
-  const handleFinishQuiz = (answers: UserAnswers, finishedQuiz: Quiz) => {
+  const handleFinishQuiz = useCallback((answers: UserAnswers, finishedQuiz: Quiz) => {
     setLastAnswers(answers);
     
     if (isAuthenticated && user) {
@@ -359,7 +415,7 @@ const App = () => {
         setPlayHistory(prev => [newPlayRecord, ...prev]);
     }
     setCurrentView(AppView.RESULT);
-  };
+  }, [isAuthenticated, user, setQuizzes, setPlayHistory, setLastAnswers, setCurrentView]);
 
   const handleGameOver = (game: keyof Omit<GameStats, 'descriptionQuiz' | 'seriesDescriptionQuiz'> | 'descriptionQuiz' | 'seriesDescriptionQuiz', genre: MovieGenre, result: GameOverResult) => {
     if (!isAuthenticated || !user) return;
@@ -465,6 +521,45 @@ const App = () => {
     handleBackToList();
   }
 
+  const handleAddComment = (quizId: string, text: string, parentId: string | null) => {
+    if (!user) return;
+    const newComment: Comment = {
+      id: crypto.randomUUID(),
+      quizId,
+      authorId: user.id,
+      text,
+      parentId,
+      createdAt: new Date().toISOString(),
+      likes: [],
+      dislikes: [],
+    };
+    setComments(prev => [...prev, newComment]);
+  };
+
+  const handleToggleLike = (commentId: string) => {
+    if (!user) return;
+    setComments(prev => prev.map(c => {
+      if (c.id === commentId) {
+        const newLikes = c.likes.includes(user.id) ? c.likes.filter(id => id !== user.id) : [...c.likes, user.id];
+        const newDislikes = c.dislikes.filter(id => id !== user.id);
+        return { ...c, likes: newLikes, dislikes: newDislikes };
+      }
+      return c;
+    }));
+  };
+
+  const handleToggleDislike = (commentId: string) => {
+    if (!user) return;
+    setComments(prev => prev.map(c => {
+      if (c.id === commentId) {
+        const newDislikes = c.dislikes.includes(user.id) ? c.dislikes.filter(id => id !== user.id) : [...c.dislikes, user.id];
+        const newLikes = c.likes.filter(id => id !== user.id);
+        return { ...c, likes: newLikes, dislikes: newDislikes };
+      }
+      return c;
+    }));
+  };
+
   const isPlaying = useMemo(() => [
     AppView.PLAY,
     AppView.MOVIE_QUIZ,
@@ -485,9 +580,9 @@ const App = () => {
       case AppView.LOGIN:
         return <LoginScreen onBack={handleBackToList} />;
       case AppView.CREATE:
-        return <CreateQuiz onCreateQuiz={handleSaveQuiz} onUpdateQuiz={handleUpdateQuiz} onBack={handleBackToList} />;
+        return <CreateQuiz onCreateQuiz={handleSaveQuiz} onUpdateQuiz={handleUpdateQuiz} onBack={handleBackToList} onDataChange={autosaveEnabled ? saveDraft : () => {}} autosaveEnabled={autosaveEnabled} />;
       case AppView.EDIT:
-        return <CreateQuiz onCreateQuiz={handleSaveQuiz} onUpdateQuiz={handleUpdateQuiz} onBack={handleBackToList} quizToEdit={editingQuiz} />;
+        return <CreateQuiz onCreateQuiz={handleSaveQuiz} onUpdateQuiz={handleUpdateQuiz} onBack={handleBackToList} quizToEdit={editingQuiz} onDataChange={autosaveEnabled ? saveDraft : () => {}} autosaveEnabled={autosaveEnabled} />;
       case AppView.STATS:
         if (statsQuiz) {
             return <QuizStatsComponent quiz={statsQuiz} onBack={handleBackToList} />;
@@ -540,13 +635,30 @@ const App = () => {
             gameStats={gameStats}
             onLogout={handleLogout}
         />;
+      case AppView.DISCUSSION:
+          if (discussionQuiz) {
+              return <DiscussionView
+                  quiz={discussionQuiz}
+                  comments={comments}
+                  user={user}
+                  isAuthenticated={isAuthenticated}
+                  onAddComment={handleAddComment}
+                  onToggleLike={handleToggleLike}
+                  onToggleDislike={handleToggleDislike}
+                  onBack={handleBackToList}
+              />;
+          }
+          return null;
       case AppView.LIST:
       default:
         return <QuizList 
-          quizzes={quizzes} 
+          quizzes={quizzes}
+          draft={draft}
           onStartQuiz={handleStartQuiz} 
           onCreateQuiz={handleCreateQuiz}
           onEditQuiz={handleEditQuiz}
+          onEditDraft={handleEditDraft}
+          onDeleteDraft={handleDeleteDraft}
           onStartMovieQuiz={handleStartMovieQuiz}
           onStartSeriesQuiz={handleStartSeriesQuiz}
           onStartMovieRatingGame={handleStartMovieRatingGame}
@@ -562,6 +674,7 @@ const App = () => {
           onDeleteQuiz={handleDeleteQuiz}
           onReportQuiz={handleOpenReportDialog}
           onShowNotification={handleShowNotification}
+          onOpenDiscussion={handleOpenDiscussion}
           isMyQuiz={isMyQuiz}
           userId={user?.id || null}
           leaderboards={leaderboards}
@@ -581,6 +694,7 @@ const App = () => {
             onCancel={() => setConfirmation(null)}
             isDestructive={confirmation.isDestructive}
             confirmButtonText={confirmation.confirmText}
+            cancelButtonText={confirmation.cancelButtonText}
         />
       )}
       {reportingQuiz && (
